@@ -1,0 +1,93 @@
+# braillecanvas
+
+A braille framebuffer for the terminal, with 24-bit colour and labels that refuse to overlap.
+
+Unicode braille addresses **2×4 dots per character cell**, so an 80×24 terminal is really a
+160×96 canvas. That's what separates a rendering from ASCII art.
+
+```
+⠄ sin ⠄⣀⡤⠤⠤⣀⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄⣀⠤⠤⠤⣀⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄ ⠄
+     ⡠⠊     ⠉⠢⡀                           ⢀⠔⠉     ⠑⢄
+⠉⠑⢄⡠⠊         ⠈⠢   ⢀⠔⠉⠉⠑⢄                ⣐⠕⠉⠉⠒⢄     ⠑⢄         ⢀⠔⠉⠉⠒⢄
+  ⠔⠡⡀           ⠑⡀⡐⠁     ⠡⡀            ⢀⡚⠁     ⠡⡀     ⠢⡀      ⡐⠁     ⠡⡀
+⢀⠊  ⠐⠄           ⠜⢂       ⠐⠄          ⡠⠕        ⠐⠄     ⠐⠄    ⠔        ⠐⠄
+⠉⠉⠉⠉⠉⠉⢍⠉⠉⠉⠉⠉⠉⠉⠉⢉⠍⠉⠉⠩⡉⠉⠉⠉⠉⠉⠉⠉⢍⠉⠉⠉⠉⠉⠉⠉⠉⢝⠍⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⢍⠉⠉⠉⠉⠉⠉⢋⠉⢉⠍⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉
+       ⠢      ⠠⠂    ⠐⠄       ⢂     ⠠⠪⠂             ⢂      ⠡⡂    cos
+```
+
+## Install
+
+```bash
+npm install braillecanvas
+```
+
+## Use
+
+```js
+import {Canvas} from 'braillecanvas';
+
+const c = new Canvas(72, 10);              // terminal columns, rows
+c.line(0, 20, 143, 20);                    // dot coordinates: 2x the cols, 4x the rows
+
+for (let x = 0; x < 144; x++)
+    c.set(x, 20 - Math.round(18 * Math.sin(x / 12)), 0x3987e5, 2);
+
+c.tryText(2, 0, 'sin', 0x3987e5);          // cell coordinates
+console.log(c.toString());
+```
+
+## What it does that a plain dot canvas doesn't
+
+Most braille canvases set and clear dots. The two things that turn that into something you can
+actually put a chart in:
+
+**Colour, arbitrated.** A cell holds eight dots but takes **one** foreground colour, so when
+several marks share a cell one has to win. `set(x, y, rgb, weight)` lets the heavier mark keep
+the colour — pass a magnitude, a z-depth, an importance, whatever ranks your marks. Blending
+would turn a dense cluster grey, and the eye does the same thing anyway.
+
+**Labels that decline rather than clip.** `tryText` places a label only if the space is free and
+returns whether it went in, so callers place in priority order and whatever doesn't fit is
+simply not drawn — which is what a cartographer would do. It also flips to the other side of its
+anchor at the frame edge, so you never get `Saturn` rendered as `Sat`.
+
+## API
+
+| | |
+|---|---|
+| `new Canvas(cols, rows, {aspect})` | `aspect` is dot height/width; 1.0 is square |
+| `set(x, y, rgb?, weight?)` | light one dot (dot coords) |
+| `line(x0, y0, x1, y1, rgb?, weight?)` | Bresenham |
+| `dottedLine(..., step = 2)` | every `step`-th dot |
+| `text(col, row, str, rgb?)` | unconditional, cell coords |
+| `tryText(col, row, str, rgb?, {pad})` | places only if free; returns `boolean` |
+| `clear()` | dots, colours and labels |
+| `toString({colour, background})` | ANSI; `background` defaults to `null` (inherit) |
+
+**Coordinates:** `set`/`line` take *dot* coordinates (`canvas.width` = `cols*2`,
+`canvas.height` = `rows*4`). `text`/`tryText` take *cell* coordinates, because glyphs can't live
+on the dot grid.
+
+## Two things worth knowing
+
+**The dots are very nearly square**, which is easy to assume otherwise. A character cell is
+about 1:2; two columns and four rows gives spacing of w/2 and h/4 = w/2. Measured in Ubuntu Mono
+11: cell 8.00 × 17px, so dots are 4.00 × 4.25px — an aspect of 1.062. `aspect` corrects that
+residual 6%. Ignore it and shapes are 6% tall, not unrecognisable.
+
+**Dotted guide lines are not cosmetic.** Scaffolding competes with the data it points at, and on
+a dense canvas it wins, which is backwards. A worked example: on a 100×28 terminal, solid figures
+for 89 constellations put 545 lit dots of line against 186 of star — 2.9:1. A step of 3 brings it
+to about 1.1:1, which finally puts more ink into the subject than the guides.
+
+## Used by
+
+- [starwheel](https://github.com/igfray/starwheel) — a live planisphere in your terminal
+- [terrafirma](https://github.com/igfray/terrafirma) — a real sky as your GNOME wallpaper
+
+Extracted from those, so the awkward parts — colour arbitration, label collision, NaN
+coordinates from a projection — are ones it has already hit.
+
+## Licence
+
+MIT.
