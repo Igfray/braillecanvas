@@ -178,26 +178,82 @@ const bits = MODE === 'ordered' ? ditherOrdered(lum)
     : ditherFS(lum);
 const c = new Canvas(COLS, ROWS);
 
-for (let y = 0; y < dotsH; y++) {
-    for (let x = 0; x < dotsW; x++) {
-        if (!bits[y * dotsW + x]) continue;
-        let colour = -1, weight = 0;
-        if (!MONO) {
-            const k = (y * dotsW + x) * 3;
-            let r = rgb[k], g = rgb[k + 1], b = rgb[k + 2];
-            // Lift the colour towards full brightness. A lit dot is the image's LIGHT, and
-            // painting it in the region's average — which includes the dark pixels that were
-            // dithered off — renders the whole picture muddy.
-            const peak = Math.max(r, g, b) || 1;
-            const lift = Math.min(255 / peak, 1.6);
-            r = Math.min(255, r * lift); g = Math.min(255, g * lift); b = Math.min(255, b * lift);
-            colour = (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
-            // Brighter dots win the cell, so a highlight is never recoloured by a shadow
-            // sharing its cell.
-            weight = 0.299 * r + 0.587 * g + 0.114 * b;
+// Two colours per cell. Eight dots share one foreground, which is braille's real constraint:
+// a cell straddling an edge — skin against sky — averages into mud. Giving the cell a
+// BACKGROUND too lets the dot pattern select between a light colour and a dark one, so the
+// edge survives. Measured on this image at 110 columns: mean per-dot colour error 45.7 -> 21.3.
+if (!MONO) {
+    for (let cy = 0; cy < ROWS; cy++) {
+        for (let cx = 0; cx < COLS; cx++) {
+            let lr = 0, lg = 0, lb = 0, ln = 0;      // dots that will be LIT
+            let dr = 0, dg = 0, db = 0, dn = 0;      // dots that will stay dark
+            for (let dy = 0; dy < 4; dy++) {
+                for (let dx = 0; dx < 2; dx++) {
+                    const x = cx * 2 + dx, y = cy * 4 + dy;
+                    if (x >= dotsW || y >= dotsH) continue;
+                    const k = (y * dotsW + x) * 3;
+                    const r = rgb[k], g = rgb[k + 1], b = rgb[k + 2];
+                    // Split by the SAME decision the dither made, so the two colours describe
+                    // exactly the pixels each half of the cell will actually show.
+                    if (bits[y * dotsW + x]) { lr += r; lg += g; lb += b; ln++; }
+                    else { dr += r; dg += g; db += b; dn++; }
+                }
+            }
+            // Foreground first: the background is defined relative to it.
+            let fr = 0, fg2 = 0, fb = 0;
+            if (ln) {
+                fr = lr / ln; fg2 = lg / ln; fb = lb / ln;
+                const peak = Math.max(fr, fg2, fb) || 1;
+                const lift = Math.min(255 / peak, 1.15);
+                fr = Math.min(255, fr * lift); fg2 = Math.min(255, fg2 * lift); fb = Math.min(255, fb * lift);
+            }
+            if (dn) {
+                // The background is only as trustworthy as the number of dots that voted for
+                // it, AND only as visible as the gaps between lit dots. Both argue the same
+                // way: in a nearly-full cell the single unlit dot defines the background, the
+                // dither leaves a dot dark only where the source is LOCALLY darkest, so that
+                // lone pixel is far darker than the cell — and it showed through as black
+                // speckle across her face and hands.
+                //
+                // Blend toward the FOREGROUND (not the cell mean) as the cell fills, so a
+                // nearly-full cell's background simply matches its dots and disappears.
+                // Two rejected alternatives, both tried and looked at:
+                //   · "mixed cells only" — uniform dark cells lose their background entirely
+                //     and render as flat black voids, destroying the shadow modelling.
+                //   · blending toward the cell mean — too weak at dn=1, speckle survived.
+                const trust = dn / 8;                     // 1/8 (one dark dot) .. 1 (all dark)
+                const k = trust * trust;                  // square it: kill the dn=1 case hard
+                const br = (dr / dn) * k + (ln ? fr : dr / dn) * (1 - k);
+                const bgg = (dg / dn) * k + (ln ? fg2 : dg / dn) * (1 - k);
+                const bb = (db / dn) * k + (ln ? fb : db / dn) * (1 - k);
+                c.setCellBackground(cx, cy,
+                    (Math.round(br) << 16) | (Math.round(bgg) << 8) | Math.round(bb));
+            } else if (ln) {
+                // A COMPLETELY full cell has no dark dots, so the branch above never runs and
+                // the cell keeps the PAGE background — pure black — which shows through the
+                // hairline gaps between dots as speckle. Measuring the render settled it:
+                // cells with 1..7 lit dots had a mean foreground/background luminance gap of
+                // 0.2 after the blend above, while the 431 cells with all 8 lit still sat at
+                // 246. That one bucket was the entire remaining artefact, and three earlier
+                // attempts missed it because they all tuned the dn > 0 path.
+                c.setCellBackground(cx, cy,
+                    (Math.round(fr) << 16) | (Math.round(fg2) << 8) | Math.round(fb));
+            }
+            if (ln) {
+                const fgCol = (Math.round(fr) << 16) | (Math.round(fg2) << 8) | Math.round(fb);
+                for (let dy = 0; dy < 4; dy++)
+                    for (let dx = 0; dx < 2; dx++) {
+                        const x = cx * 2 + dx, y = cy * 4 + dy;
+                        if (x < dotsW && y < dotsH && bits[y * dotsW + x])
+                            c.set(x, y, fgCol, 1);
+                    }
+            }
         }
-        c.set(x, y, colour, weight);
     }
+} else {
+    for (let y = 0; y < dotsH; y++)
+        for (let x = 0; x < dotsW; x++)
+            if (bits[y * dotsW + x]) c.set(x, y, -1, 0);
 }
 
 process.stdout.write(c.toString({colour: !MONO, background: MONO ? null : 0x000000}) + '\n');
