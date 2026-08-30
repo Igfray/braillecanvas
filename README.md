@@ -36,6 +36,25 @@ c.tryText(2, 0, 'sin', 0x3987e5);          // cell coordinates
 console.log(c.toString());
 ```
 
+## Example: a live server monitor
+
+`examples/monitor.js` plots real `/proc` data — CPU, memory and load average over a rolling
+window, with a per-core bar strip along the bottom. It is 78×20 cells, which is a **156×80 dot
+framebuffer**.
+
+![a terminal system monitor drawn in braille](docs/monitor.png)
+
+```bash
+node examples/monitor.js                    # ~20s, then exits
+node examples/monitor.js --frames 500 --interval 250
+node examples/monitor.js --no-colour        # pipe-friendly
+```
+
+It exercises the three things below in one picture: the gridlines are drawn at weight 0 so a
+trace crossing them keeps its colour, the labels are placed with `tryText` so a crowded chart
+drops a label rather than clipping one, and the traces resolve to a quarter of a character
+cell.
+
 ## What it does that a plain dot canvas doesn't
 
 Most braille canvases set and clear dots. The two things that turn that into something you can
