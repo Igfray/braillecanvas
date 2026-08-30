@@ -59,6 +59,12 @@ equal tones always produce the same dot arrangement — the eye reads that regul
 distinct shade rather than as noise. The difference between an unreadable smudge and the
 picture above was that one flag.
 
+Do **not** pre-boost contrast or gamma. It is tempting — a 1-bit grid needs contrast — but
+with two colours per cell the tone is carried by colour, not dot density, and a boosted curve
+just crushes cells to all-dots-or-none. Measured on the Mona Lisa at 93 columns: contrast 1.8
+plus gamma 2.2 left **32%** of cells with 0 or 8 dots lit (flat, textureless), against **3.4%**
+for a plain autocontrast. Straight autocontrast also keeps the colours the painting actually has.
+
 Colour is applied per cell, and each cell carries **two** of them: a foreground for the lit
 dots and a background for the gaps, so a cell straddling an edge — skin against sky — keeps
 the edge instead of averaging it into mud. Measured on this image: mean per-dot colour error
