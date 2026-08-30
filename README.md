@@ -47,23 +47,42 @@ enough for a recognisable face.
 # any format -> PPM (the example has no dependencies, and Node can't decode JPEG)
 python3 -c "from PIL import Image; Image.open('in.jpg').save('out.ppm')"
 
-node examples/image.js out.ppm --cols 110 --ordered
-node examples/image.js out.ppm --cols 60 --mono --ordered
+node examples/image.js out.ppm --cols 110 --btc        # colour: best quality
+node examples/image.js out.ppm --cols 60 --mono --ordered   # monochrome
 ```
 
-**Use `--ordered` for anything small.** The default is Floyd–Steinberg error diffusion, which
-is right for large photographic renders but works against you here: it preserves *local
-average* tone by scattering error, so every region lands near its own mean and the whole
-picture reads as uniform texture. Ordered (Bayer) dithering uses a fixed threshold pattern, so
-equal tones always produce the same dot arrangement — the eye reads that regularity as a
-distinct shade rather than as noise. The difference between an unreadable smudge and the
-picture above was that one flag.
+**Use `--btc` for colour.** It derives each cell's dot pattern from the cell's own eight
+pixels — cluster them on their widest colour axis, and the pattern records which pixel went
+which way — instead of taking the pattern from a fixed dither grid and fitting two colours to
+whatever split that produced. A threshold grid imposes structure on smooth regions that have
+none. Measured on the Mona Lisa at 93 columns, against ordered dither plus two colours:
 
-Do **not** pre-boost contrast or gamma. It is tempting — a 1-bit grid needs contrast — but
-with two colours per cell the tone is carried by colour, not dot density, and a boosted curve
-just crushes cells to all-dots-or-none. Measured on the Mona Lisa at 93 columns: contrast 1.8
-plus gamma 2.2 left **32%** of cells with 0 or 8 dots lit (flat, textureless), against **3.4%**
-for a plain autocontrast. Straight autocontrast also keeps the colours the painting actually has.
+| | dither + 2 colours | `--btc` |
+|---|---|---|
+| mean per-dot colour error | 44.1 | **24.8** |
+| cells with no texture | 35.1% | **1.6%** |
+
+**Use `--ordered` for anything small in monochrome.** The default is Floyd–Steinberg error
+diffusion, which is right for large photographic renders but works against you at low dot
+counts: it preserves *local average* tone by scattering error, so every region lands near its
+own mean and the whole picture reads as uniform texture. Ordered (Bayer) dithering uses a fixed
+threshold pattern, so equal tones always produce the same dot arrangement — the eye reads that
+regularity as a distinct shade rather than as noise.
+
+Do **not** pre-boost contrast or gamma for a colour render. It is tempting — a 1-bit grid needs
+contrast — but with two colours per cell the tone is carried by colour, not dot density, and a
+boosted curve just crushes cells to all-dots-or-none. Measured on the Mona Lisa at 93 columns:
+contrast 1.8 plus gamma 2.2 left **32%** of cells with 0 or 8 dots lit (flat, textureless),
+against **3.4%** for a plain autocontrast.
+
+Two limits worth knowing before you reach for this:
+
+- **Below ~90 columns, photographs do not work.** There are not enough dots for a face. Line
+  art, charts and sparklines are fine much smaller, because they are already high-contrast.
+- **Monochrome cannot render every image**, however you tune it. The Mona Lisa measures 159
+  luminance on her face against 192 for the sky behind her — the background is *brighter* than
+  the subject, so a 1-bit density render is a silhouette by construction. Check the histogram
+  before blaming the settings.
 
 Colour is applied per cell, and each cell carries **two** of them: a foreground for the lit
 dots and a background for the gaps, so a cell straddling an edge — skin against sky — keeps
