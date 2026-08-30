@@ -41,6 +41,14 @@ export class Canvas {
      * @param {number} [opt.aspect]  height/width of one dot; 1.0 is square
      */
     constructor(cols, rows, opt = {}) {
+        // Validate here rather than letting the typed-array constructor throw
+        // "Invalid typed array length: -15", which names nothing the caller passed.
+        for (const [name, v] of [['cols', cols], ['rows', rows]]) {
+            if (!Number.isInteger(v))
+                throw new RangeError(`Canvas ${name} must be an integer, got ${v}`);
+            if (v < 0)
+                throw new RangeError(`Canvas ${name} must not be negative, got ${v}`);
+        }
         this.cols = cols;
         this.rows = rows;
         this.width = cols * 2;
@@ -151,14 +159,19 @@ export class Canvas {
      * flips to the left if there is not, so nothing is ever clipped by the edge.
      */
     tryText(col, row, str, rgb = -1, {pad = 1} = {}) {
-        if (row < 0 || row >= this.rows)
+        // Snap first, for the same reason text() does — and measure in CHARACTERS, since
+        // str.length counts UTF-16 code units and would reserve one cell too many per
+        // astral character.
+        const r = Math.round(row), anchor = Math.round(col);
+        if (!Number.isFinite(r) || !Number.isFinite(anchor) || r < 0 || r >= this.rows)
             return false;
-        let c = col;
-        if (c + str.length > this.cols)
-            c = col - str.length - 1;          // flip to the other side of the anchor
-        if (c < 0 || c + str.length > this.cols)
+        const len = Array.from(str).length;
+        let c = anchor;
+        if (c + len > this.cols)
+            c = anchor - len - 1;              // flip to the other side of the anchor
+        if (c < 0 || c + len > this.cols)
             return false;
-        for (let k = -pad; k < str.length + pad; k++) {
+        for (let k = -pad; k < len + pad; k++) {
             const cc = c + k;
             // Clamp to the row. Indexing row*cols + c + k without this ran off the end into
             // the neighbouring rows, so a label at the right edge of one row blocked a label
@@ -166,28 +179,38 @@ export class Canvas {
             // this method exists to handle.
             if (cc < 0 || cc >= this.cols)
                 continue;
-            if (this._glyphs?.has(row * this.cols + cc))
+            if (this._glyphs?.has(r * this.cols + cc))
                 return false;
         }
-        this.text(c, row, str, rgb);
+        this.text(c, r, str, rgb);
         return true;
     }
 
     /** Text, written at CELL coordinates — glyphs cannot live on the dot grid. */
     text(col, row, str, rgb = -1) {
-        if (row < 0 || row >= this.rows)
+        // Snap to the cell grid BEFORE indexing. A fractional index makes the typed-array
+        // write vanish (typed arrays discard them) and stores the glyph under a Map key
+        // toString() can never look up, so text(2.5, 1, 'hi') returned normally and drew
+        // nothing at all. Any caller computing a column from data — col = width / 2 — lands
+        // here immediately.
+        const r = Math.round(row), c0 = Math.round(col);
+        if (!Number.isFinite(r) || !Number.isFinite(c0) || r < 0 || r >= this.rows)
             return;
-        for (let k = 0; k < str.length; k++) {
-            const c = col + k;
+        // Iterate CHARACTERS, not UTF-16 code units: str[k] splits an astral character
+        // (emoji, many CJK extensions) across two cells, so a 3-character label claimed 4
+        // cells — and tryText reserves its span from the same count.
+        const chars = Array.from(str);
+        for (let k = 0; k < chars.length; k++) {
+            const c = c0 + k;
             if (c < 0 || c >= this.cols)
                 continue;
-            const i = row * this.cols + c;
+            const i = r * this.cols + c;
             // A glyph REPLACES the cell rather than OR-ing into it, so the renderer has to know
             // which cells are text; that is what the glyph map is for.
             this.cells[i] = 0;
             this.colour[i] = rgb;
             this.weight[i] = Infinity;      // text must never lose its colour to a mark
-            (this._glyphs ??= new Map()).set(i, str[k]);
+            (this._glyphs ??= new Map()).set(i, chars[k]);
         }
     }
 

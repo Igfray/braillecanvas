@@ -218,3 +218,41 @@ test('aspect defaults to 1 and leaves coordinates untouched', () => {
     for (const c of [plain, explicit]) c.line(0, 0, 30, 30, 0xffffff, 1);
     assert.deepEqual(Array.from(plain.cells), Array.from(explicit.cells));
 });
+
+test('a fractional cell coordinate is snapped, not silently dropped', () => {
+    // text() indexed a typed array with row*cols + col. A fractional index makes the write
+    // vanish (typed arrays discard them) AND stores the glyph under an unreachable Map key,
+    // so text(2.5, 1, 'hi') returned normally, kept 2 glyphs at keys 22.5/23.5, and rendered
+    // an empty row. Computing a column from data — col = width / 2 — hits this immediately.
+    const c = new Canvas(20, 5);
+    c.text(2.5, 1.5, 'hi', 0xffffff);
+    // Math.round(1.5) is 2 — the label lands on row 2. (My first version of this test
+    // asserted row 1 and failed against correct code: the test was wrong, not the fix.)
+    assert.ok(c.toString({colour: false}).split('\n')[2].includes('hi'),
+        'the label must actually render');
+    for (const k of c._glyphs.keys())
+        assert.ok(Number.isInteger(k), `glyph key ${k} is not an integer`);
+});
+
+test('a fractional coordinate reaches tryText too', () => {
+    const c = new Canvas(20, 5);
+    assert.ok(c.tryText(3.7, 2.2, 'ok', 0xffffff));
+    assert.ok(c.toString({colour: false}).split('\n')[2].includes('ok'));
+});
+
+test('an astral character occupies one cell, not two', () => {
+    // str[k] indexes UTF-16 code UNITS, so an emoji surrogate pair was split across two
+    // cells. It happened to render because the halves sat adjacent, but the cell accounting
+    // was wrong by one per astral char — which is what tryText reserves space with.
+    const c = new Canvas(20, 3);
+    c.text(0, 0, 'a\u{1F600}b', 0xffffff);
+    assert.equal(c._glyphs.size, 3, 'three characters should occupy three cells');
+});
+
+test('a canvas cannot be created with a negative size', () => {
+    // Previously threw a raw RangeError from the typed-array constructor:
+    // "Invalid typed array length: -15", which names nothing the caller passed.
+    assert.throws(() => new Canvas(-5, 3), /cols|rows|size/i);
+    assert.throws(() => new Canvas(3, -5), /cols|rows|size/i);
+    assert.throws(() => new Canvas(2.5, 3), /integer/i);
+});
