@@ -132,13 +132,43 @@ export class Canvas {
         if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
             !Number.isFinite(x1) || !Number.isFinite(y1))
             return;
-        let x = Math.round(x0), y = Math.round(y0);
-        const xe = Math.round(x1), ye = Math.round(y1);
+        // CLIP to the canvas before rasterising, rather than bounding the loop count.
+        //
+        // "Finite" is not the same as "reasonable": line(0, 0, 1e9, 3) is finite and steps a
+        // billion times on a small canvas, since every iteration past the edge still costs a
+        // set() call that only rejects it. 1e7 already costs 58ms and it scales linearly, so a
+        // units error or an unclamped outlier in plotting code turns one line into a hang.
+        //
+        // Clamping the ITERATION COUNT was the obvious fix and it is wrong: a line coming from
+        // far off-canvas INTO view spends its first thousands of steps outside, so a clamp
+        // stops before it arrives and the line silently disappears. Clipping the SEGMENT keeps
+        // both properties — bounded work, and every visible dot still drawn.
+        //
+        // Liang-Barsky against the dot grid, in the aspect-corrected space set() works in.
+        const ax0 = x0, ay0 = this.aspect === 1 ? y0 : y0 * this.aspect;
+        const ax1 = x1, ay1 = this.aspect === 1 ? y1 : y1 * this.aspect;
+        let px = ax1 - ax0, py = ay1 - ay0;
+        let t0 = 0, t1 = 1;
+        for (const [p, q] of [[-px, ax0], [px, this.width - 1 - ax0],
+                              [-py, ay0], [py, this.height - 1 - ay0]]) {
+            if (p === 0) {
+                if (q < 0) return;               // parallel to this edge and outside it
+                continue;
+            }
+            const r = q / p;
+            if (p < 0) { if (r > t1) return; if (r > t0) t0 = r; }
+            else       { if (r < t0) return; if (r < t1) t1 = r; }
+        }
+        // Undo the aspect correction on the way out: set() applies it again.
+        const inv = this.aspect === 1 ? 1 : 1 / this.aspect;
+        let x = Math.round(ax0 + t0 * px), y = Math.round((ay0 + t0 * py) * inv);
+        const xe = Math.round(ax0 + t1 * px), ye = Math.round((ay0 + t1 * py) * inv);
         const dx = Math.abs(xe - x), sx = x < xe ? 1 : -1;
         const dy = -Math.abs(ye - y), sy = y < ye ? 1 : -1;
         let err = dx + dy;
-        // A guard rather than a while(true): belt and braces now that the endpoints are known
-        // finite, and it still bounds a line drawn far outside the canvas.
+        // Still a counted loop rather than a while(true): the clip above bounds the span, and
+        // this costs one comparison per dot to guarantee termination whatever the arithmetic
+        // does at the edges.
         const limit = dx - dy + 4;
         for (let n = 0; n <= limit; n++) {
             this.set(x, y, rgb, weight);

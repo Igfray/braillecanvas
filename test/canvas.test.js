@@ -372,3 +372,43 @@ test('a colour escape in a label does not survive either', () => {
     c.text(0, 0, '\x1b[31mred\x1b[0m', 0xffffff);
     assert.ok(!c.toString().includes('\x1b[31m'));
 });
+
+test('a line is clipped to the canvas, not truncated', () => {
+    // Two failure modes, and fixing the first naively causes the second.
+    //
+    // A huge FINITE endpoint is not covered by the non-finite guard: line(0, 0, 1e9, 3) steps a
+    // billion times, since every iteration past the edge still costs a set() call that only
+    // rejects it. But clamping the ITERATION COUNT breaks a line arriving from off-canvas — it
+    // spends its first thousands of steps outside, so the clamp stops before it arrives and the
+    // line silently vanishes. Clipping the segment is what keeps both properties.
+    const dots = c => [...c.toString()].filter(ch => ch > '\u2800' && ch <= '\u28FF').length;
+
+    const far = new Canvas(20, 10);
+    const t0 = Date.now();
+    far.line(10, 10, 1e9, 3, 0xffffff, 1);
+    assert.ok(Date.now() - t0 < 500, 'a huge finite endpoint must not be rasterised step by step');
+    assert.ok(dots(far) > 0, 'and it must still draw the part that is on the canvas');
+
+    const incoming = new Canvas(20, 10);
+    incoming.line(-1000, -1000, 10, 10, 0xffffff, 1);
+    assert.ok(dots(incoming) > 0, 'a line arriving from off-canvas must still be drawn');
+
+    const across = new Canvas(20, 10);
+    across.line(-500, 10, 500, 10, 0xffffff, 1);
+    assert.ok(dots(across) >= 20, 'a line crossing the whole canvas must span it');
+
+    const outside = new Canvas(20, 10);
+    outside.line(-50, -50, -40, -40, 0xffffff, 1);
+    assert.strictEqual(dots(outside), 0, 'a line entirely outside must draw nothing');
+});
+
+test('clipping does not disturb ordinary lines', () => {
+    // The clip must be invisible for everything that already fitted.
+    const dots = c => [...c.toString()].filter(ch => ch > '\u2800' && ch <= '\u28FF').length;
+    const vert = new Canvas(20, 10); vert.line(10, 0, 10, 39, 0xffffff, 1);
+    assert.ok(dots(vert) >= 10, 'a full-height vertical line');
+    const horiz = new Canvas(20, 10); horiz.line(0, 20, 39, 20, 0xffffff, 1);
+    assert.ok(dots(horiz) >= 20, 'a full-width horizontal line');
+    const diag = new Canvas(20, 10); diag.line(0, 0, 39, 39, 0xffffff, 1);
+    assert.ok(dots(diag) >= 20, 'a diagonal');
+});
