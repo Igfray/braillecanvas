@@ -36,6 +36,34 @@ c.tryText(2, 0, 'sin', 0x3987e5);          // cell coordinates
 console.log(c.toString());
 ```
 
+## Example: an image, dithered
+
+`examples/image.js` renders a picture as braille. A 110×65 terminal is a **220×260 bitmap** —
+enough for a recognisable face.
+
+![the Mona Lisa rendered as coloured braille](docs/mona.png)
+
+```bash
+# any format -> PPM (the example has no dependencies, and Node can't decode JPEG)
+python3 -c "from PIL import Image; Image.open('in.jpg').save('out.ppm')"
+
+node examples/image.js out.ppm --cols 110 --ordered
+node examples/image.js out.ppm --cols 60 --mono --ordered
+```
+
+**Use `--ordered` for anything small.** The default is Floyd–Steinberg error diffusion, which
+is right for large photographic renders but works against you here: it preserves *local
+average* tone by scattering error, so every region lands near its own mean and the whole
+picture reads as uniform texture. Ordered (Bayer) dithering uses a fixed threshold pattern, so
+equal tones always produce the same dot arrangement — the eye reads that regularity as a
+distinct shade rather than as noise. The difference between an unreadable smudge and the
+picture above was that one flag.
+
+Colour is applied per cell, sampled from the region the dots came from and lifted towards full
+brightness, because a lit dot is the image's *light* and painting it in the region's average —
+which includes the dark pixels that were dithered away — renders everything muddy. Brighter
+dots carry more weight, so a highlight is never recoloured by a shadow sharing its cell.
+
 ## Example: a live server monitor
 
 `examples/monitor.js` plots real `/proc` data — CPU, memory and load average over a rolling
