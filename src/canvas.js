@@ -69,7 +69,16 @@ export class Canvas {
      * magnitude, a z-depth, an importance, whatever ranks your marks. Ties go to the newer one.
      */
     set(x, y, rgb = -1, weight = 0) {
-        const dx = x | 0, dy = y | 0;
+        // Validate BEFORE coercing. `x | 0` maps NaN and undefined to 0 and truncates toward
+        // zero, so (-0.5)|0 is -0 — which is not < 0. Both slipped past the bounds check and
+        // planted a dot in the top-left corner: NaN is precisely what a projection returns for
+        // a point behind the viewer, the case line()'s loop guard already defends against.
+        if (!Number.isFinite(x) || !Number.isFinite(y))
+            return;
+        const ay = this.aspect === 1 ? y : y * this.aspect;
+        if (!Number.isFinite(ay))
+            return;
+        const dx = Math.floor(x), dy = Math.floor(ay);
         if (dx < 0 || dy < 0 || dx >= this.width || dy >= this.height)
             return;
         const cx = dx >> 1, cy = dy >> 2;
@@ -150,8 +159,14 @@ export class Canvas {
         if (c < 0 || c + str.length > this.cols)
             return false;
         for (let k = -pad; k < str.length + pad; k++) {
-            const i = row * this.cols + c + k;
-            if (this._glyphs?.has(i))
+            const cc = c + k;
+            // Clamp to the row. Indexing row*cols + c + k without this ran off the end into
+            // the neighbouring rows, so a label at the right edge of one row blocked a label
+            // at the left edge of the next — silently, in exactly the crowded-chart case
+            // this method exists to handle.
+            if (cc < 0 || cc >= this.cols)
+                continue;
+            if (this._glyphs?.has(row * this.cols + cc))
                 return false;
         }
         this.text(c, row, str, rgb);

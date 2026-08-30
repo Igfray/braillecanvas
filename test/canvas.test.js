@@ -158,3 +158,63 @@ test('dot grid is 2x4 per cell', () => {
     assert.equal(c.width, 80);
     assert.equal(c.height, 48);
 });
+
+
+// ── Defects found by probing the library rather than reading it (2026-08-30) ──
+
+test('a NaN coordinate lights nothing, rather than the top-left corner', () => {
+    // `x | 0` coerces NaN to 0 BEFORE the bounds check, so a projection that returns NaN —
+    // the exact case line()'s loop guard documents — planted a dot at (0,0). line() was
+    // protected; set() was not.
+    const c = new Canvas(10, 5);
+    c.set(NaN, NaN, 0xff0000, 1);
+    c.set(undefined, 3, 0xff0000, 1);
+    c.set(2, NaN, 0xff0000, 1);
+    assert.equal(c.cells.reduce((a, b) => a + b, 0), 0, 'NaN must not light a dot');
+});
+
+test('a coordinate just off the top-left is out of bounds, not rounded into view', () => {
+    // (-0.5)|0 is -0, which is NOT < 0, so the guard missed it and the dot landed at (0,0).
+    const c = new Canvas(10, 5);
+    c.set(-0.5, -0.5, 0xff0000, 1);
+    assert.equal(c.cells.reduce((a, b) => a + b, 0), 0, 'a negative fraction is outside the canvas');
+});
+
+test('a label at one row edge does not block a label at the next row edge', () => {
+    // The collision scan indexed row*cols + c + k without clamping to the row, so k = -pad
+    // read the LAST cell of the PREVIOUS row. A right-edge label blocked a left-edge one
+    // on the row below — silent, and exactly the crowded case tryText exists for.
+    const c = new Canvas(20, 5);
+    c.text(17, 1, 'XYZ', 0xffffff);
+    assert.ok(c.tryText(0, 2, 'ok', 0x00ff00), 'a different row must not collide');
+    assert.ok(c.tryText(0, 0, 'up', 0x00ff00), 'nor the row above');
+});
+
+test('a label still refuses to overwrite one on its own row', () => {
+    const c = new Canvas(20, 5);
+    c.text(5, 2, 'taken', 0xffffff);
+    assert.ok(!c.tryText(4, 2, 'x', 0x00ff00), 'the pad must still catch a real neighbour');
+    assert.ok(!c.tryText(5, 2, 'y', 0x00ff00), 'and a direct overlap');
+});
+
+test('aspect stretches the vertical axis rather than being decorative', () => {
+    // aspect was stored and documented but never read by any method: the two canvases
+    // below were byte-identical. It now scales y about the origin, so a caller correcting
+    // the ~6% residual dot aspect gets a circle instead of a 6%-flat ellipse.
+    const flat = new Canvas(20, 10, {aspect: 1.0});
+    const tall = new Canvas(20, 10, {aspect: 2.0});
+    for (const c of [flat, tall]) c.set(4, 8, 0xffffff, 1);
+    assert.notDeepEqual(Array.from(flat.cells), Array.from(tall.cells),
+        'aspect must change where a dot lands');
+    // y=8 at aspect 2 lands at y=16; both are in range, so the difference is real.
+    const at = (c, x, y) => (c.cells[(y >> 2) * c.cols + (x >> 1)] ?? 0) !== 0;
+    assert.ok(at(flat, 4, 8), 'aspect 1 puts it at y=8');
+    assert.ok(at(tall, 4, 16), 'aspect 2 puts it at y=16');
+});
+
+test('aspect defaults to 1 and leaves coordinates untouched', () => {
+    const plain = new Canvas(20, 10);
+    const explicit = new Canvas(20, 10, {aspect: 1.0});
+    for (const c of [plain, explicit]) c.line(0, 0, 30, 30, 0xffffff, 1);
+    assert.deepEqual(Array.from(plain.cells), Array.from(explicit.cells));
+});

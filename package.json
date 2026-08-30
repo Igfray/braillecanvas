@@ -1,19 +1,40 @@
 {
   "name": "braillecanvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A braille framebuffer for the terminal, with 24-bit colour and collision-avoiding labels. 2x4 dots per cell.",
   "type": "module",
   "main": "./src/canvas.js",
   "exports": "./src/canvas.js",
-  "files": ["LICENSE", "README.md", "src"],
+  "files": [
+    "LICENSE",
+    "README.md",
+    "src"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js"
   },
-  "keywords": ["braille", "terminal", "tui", "cli", "canvas", "framebuffer", "ansi", "plot", "drawing"],
+  "keywords": [
+    "braille",
+    "terminal",
+    "tui",
+    "cli",
+    "canvas",
+    "framebuffer",
+    "ansi",
+    "plot",
+    "drawing"
+  ],
   "author": "Isaac <isaac3349@proton.me>",
   "license": "MIT",
-  "engines": {"node": ">=18"},
-  "repository": {"type": "git", "url": "git+https://github.com/Igfray/braillecanvas.git"},
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Igfray/braillecanvas.git"
+  },
   "homepage": "https://github.com/Igfray/braillecanvas#readme",
-  "bugs": {"url": "https://github.com/Igfray/braillecanvas/issues"}
+  "bugs": {
+    "url": "https://github.com/Igfray/braillecanvas/issues"
+  }
 }

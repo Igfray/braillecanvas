@@ -92,7 +92,12 @@ on the dot grid.
 **The dots are very nearly square**, which is easy to assume otherwise. A character cell is
 about 1:2; two columns and four rows gives spacing of w/2 and h/4 = w/2. Measured in Ubuntu Mono
 11: cell 8.00 × 17px, so dots are 4.00 × 4.25px — an aspect of 1.062. `aspect` corrects that
-residual 6%. Ignore it and shapes are 6% tall, not unrecognisable.
+residual 6% by scaling y about the origin, so a circle drawn with `aspect: 1.062` comes out
+round rather than 6% flat. Ignore it and shapes are slightly squat, not unrecognisable.
+
+**Out-of-range coordinates light nothing.** `NaN`, `undefined` and negative fractions are all
+rejected rather than clamped — a projection returns `NaN` for a point behind the viewer, and
+silently plotting that in the corner is worse than dropping it.
 
 **Dotted guide lines are not cosmetic.** Scaffolding competes with the data it points at, and on
 a dense canvas it wins, which is backwards. A worked example: on a 100×28 terminal, solid figures
