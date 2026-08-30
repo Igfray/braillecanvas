@@ -83,7 +83,10 @@ export class Canvas {
      * the whole background path.
      */
     setCellBackground(col, row, rgb) {
-        const c = Math.round(col), r = Math.round(row);
+        // FLOOR, not round, to agree with set(). A cell spans [n, n+1), so a coordinate of 1.5
+        // is inside cell 1; rounding sends it to cell 2, a cell the caller's point is not in.
+        // Silently drawing in the wrong place is the same defect fixed in text() for 0.2.1.
+        const c = Math.floor(col), r = Math.floor(row);
         if (!Number.isFinite(c) || !Number.isFinite(r) ||
             c < 0 || r < 0 || c >= this.cols || r >= this.rows)
             return;
@@ -120,13 +123,22 @@ export class Canvas {
 
     /** Bresenham, at dot coordinates. */
     line(x0, y0, x1, y1, rgb = -1, weight = 0) {
+        // Reject non-finite endpoints before anything else. There IS a loop guard below, but it
+        // is computed from the endpoints — so an infinite endpoint makes the limit itself
+        // Infinity and the guard never fires. line(0, 0, Infinity, 3) spun forever and took the
+        // whole test file down with it. An infinite coordinate is not exotic: it is what a
+        // division by zero upstream produces, next door to the NaN a projection returns for a
+        // point behind the viewer.
+        if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+            !Number.isFinite(x1) || !Number.isFinite(y1))
+            return;
         let x = Math.round(x0), y = Math.round(y0);
         const xe = Math.round(x1), ye = Math.round(y1);
         const dx = Math.abs(xe - x), sx = x < xe ? 1 : -1;
         const dy = -Math.abs(ye - y), sy = y < ye ? 1 : -1;
         let err = dx + dy;
-        // A guard rather than a while(true): a NaN coordinate would otherwise spin forever, and
-        // NaN is exactly what a projection hands back for a point behind the viewer.
+        // A guard rather than a while(true): belt and braces now that the endpoints are known
+        // finite, and it still bounds a line drawn far outside the canvas.
         const limit = dx - dy + 4;
         for (let n = 0; n <= limit; n++) {
             this.set(x, y, rgb, weight);
@@ -219,7 +231,17 @@ export class Canvas {
         // Iterate CHARACTERS, not UTF-16 code units: str[k] splits an astral character
         // (emoji, many CJK extensions) across two cells, so a 3-character label claimed 4
         // cells — and tryText reserves its span from the same count.
-        const chars = Array.from(str);
+        //
+        // Control characters are dropped rather than drawn. The canvas is written straight to a
+        // terminal, so a label is an injection point: a caller rendering a filename, a username
+        // or an API response passed the terminal whatever escapes the string contained, and
+        // "\x1b[2J" clears the screen. A newline was as bad in a quieter way — it added a row,
+        // so the frame stopped matching the size the caller asked for and every cursor
+        // calculation downstream was off by one.
+        const chars = Array.from(str).filter(ch => {
+            const p = ch.codePointAt(0);
+            return p > 0x1f && p !== 0x7f && !(p >= 0x80 && p <= 0x9f);
+        });
         for (let k = 0; k < chars.length; k++) {
             const c = c0 + k;
             if (c < 0 || c >= this.cols)

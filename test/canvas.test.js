@@ -296,3 +296,79 @@ test('cell backgrounds are ignored when colour is off', () => {
     c.setCellBackground(0, 0, 0x001133);
     assert.ok(!c.toString({colour: false}).includes('\x1b['), 'no escapes at all in mono mode');
 });
+
+test('line() terminates on a non-finite endpoint', () => {
+    // It did NOT: line(0, 0, Infinity, 3) spun forever. Bresenham steps until it reaches the
+    // end point, and it can never reach infinity, so the loop has no exit. A rendering library
+    // that hangs on one bad number is a denial of service — and an infinite coordinate is
+    // exactly what a division by zero upstream produces.
+    for (const [x0, y0, x1, y1] of [
+        [0, 0, Infinity, 3], [0, 0, 3, Infinity], [-Infinity, 0, 3, 3],
+        [NaN, 0, 3, 3], [0, 0, NaN, 3],
+    ]) {
+        const c = new Canvas(4, 2);
+        const t0 = Date.now();
+        c.line(x0, y0, x1, y1, 0xffffff, 1);
+        assert.ok(Date.now() - t0 < 1000,
+            `line(${x0}, ${y0}, ${x1}, ${y1}) took over a second — it is looping`);
+    }
+});
+
+test('a fractional dot coordinate does not land somewhere else', () => {
+    // set(1.5, 1.5) wrote to a cell it was never asked to touch. Typed arrays discard a
+    // fractional index, so row*cols + col silently resolves to the WRONG cell rather than
+    // failing — the same defect fixed in text() for 0.2.1, still live in set().
+    const a = new Canvas(4, 2);
+    a.set(1.5, 1.5, 0xffffff, 1);
+    const b = new Canvas(4, 2);
+    b.set(1, 1, 0xffffff, 1);
+    assert.strictEqual(a.toString(), b.toString(),
+        'a fractional coordinate must resolve like its floor, not land elsewhere');
+});
+
+test('a fractional cell coordinate does not land somewhere else', () => {
+    const a = new Canvas(4, 2);
+    a.setCellBackground(1.5, 0.5, 0xff0000);
+    const b = new Canvas(4, 2);
+    b.setCellBackground(1, 0, 0xff0000);
+    assert.strictEqual(a.toString({colour: true}), b.toString({colour: true}));
+});
+
+test('an out-of-range dot is dropped, not wrapped', () => {
+    // A coordinate past the edge must not appear on the opposite side, which is what
+    // unchecked index arithmetic gives you.
+    const blank = new Canvas(4, 2).toString();
+    for (const [x, y] of [[-1, 0], [0, -1], [999, 0], [0, 999], [NaN, 0], [0, NaN],
+                          [Infinity, 0], [-1e9, -1e9]]) {
+        const c = new Canvas(4, 2);
+        c.set(x, y, 0xffffff, 1);
+        assert.strictEqual(c.toString(), blank, `set(${x}, ${y}) drew something`);
+    }
+});
+
+test('a control character in a label cannot escape the canvas', () => {
+    // text() passed the string through verbatim, so a caller rendering a filename, a username
+    // or an API response into a label handed the terminal whatever escape codes it contained.
+    // "\x1b[2J" clears the screen; "\x1b[H" homes the cursor. The canvas is written straight to
+    // a terminal, so this is injection, not cosmetics.
+    const c = new Canvas(20, 2);
+    c.text(0, 0, 'x\x1b[2J\x1b[Hgotcha', 0xffffff);
+    const out = c.toString();
+    assert.ok(!out.includes('\x1b[2J'), 'a clear-screen sequence survived into the output');
+    assert.ok(!out.includes('\x1b[H'), 'a cursor-home sequence survived into the output');
+});
+
+test('a newline in a label does not change the canvas geometry', () => {
+    // An embedded newline added a row, so the frame no longer matched the size the caller
+    // asked for — every subsequent cursor calculation downstream is then off by one.
+    const c = new Canvas(10, 2);
+    c.text(0, 0, 'a\nb', 0xffffff);
+    assert.strictEqual(c.toString().split('\n').length, 2,
+        'a two-row canvas must render two rows whatever the label contains');
+});
+
+test('a colour escape in a label does not survive either', () => {
+    const c = new Canvas(10, 2);
+    c.text(0, 0, '\x1b[31mred\x1b[0m', 0xffffff);
+    assert.ok(!c.toString().includes('\x1b[31m'));
+});
