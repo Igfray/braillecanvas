@@ -121,6 +121,55 @@ export class Canvas {
         }
     }
 
+    /**
+     * Clip a segment to the canvas and return its integer endpoints, or null if it misses entirely.
+     *
+     * Shared by line() and dottedLine() because it was NOT shared, and that is exactly how the two
+     * drifted: line() got the non-finite guard and this clip, dottedLine() sat directly beneath it
+     * running the same Bresenham walk over the same unvalidated input and got neither. Measured
+     * before the fix, 100x30 canvas: line(0,0,1e9,1e9) 0 ms, dottedLine(0,0,1e8,1e8) 629 ms and
+     * linear in the coordinate. One function, two callers, so the next drawing primitive inherits
+     * the guarantee instead of re-deriving it. [external review, 2026-09-06]
+     *
+     * "Finite" is not "reasonable": a finite 1e9 endpoint steps a billion times, because every
+     * iteration past the edge still costs a set() call that only rejects it. Clamping the ITERATION
+     * COUNT instead would be wrong — a line arriving from far off-canvas spends its first thousands
+     * of steps outside, so a clamp stops before it arrives and the line silently vanishes.
+     */
+    _clipSegment(x0, y0, x1, y1) {
+        // An infinite coordinate is not exotic: it is what a division by zero upstream produces,
+        // next door to the NaN a projection returns for a point behind the viewer. Bresenham never
+        // terminates on one.
+        //
+        // Belt AND braces, stated honestly: mutation testing shows the clip below already rejects
+        // every non-finite input on its own (each comparison against NaN is false, so t0/t1 never
+        // admit the segment and it returns null). Deleting this check breaks no test. It stays
+        // because it makes the intent legible at the top of the function and costs one comparison
+        // — but it is not what the tests are proving.
+        if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+            !Number.isFinite(x1) || !Number.isFinite(y1))
+            return null;
+        // Liang-Barsky against the dot grid, in the aspect-corrected space set() works in.
+        const ax0 = x0, ay0 = this.aspect === 1 ? y0 : y0 * this.aspect;
+        const ax1 = x1, ay1 = this.aspect === 1 ? y1 : y1 * this.aspect;
+        const px = ax1 - ax0, py = ay1 - ay0;
+        let t0 = 0, t1 = 1;
+        for (const [p, q] of [[-px, ax0], [px, this.width - 1 - ax0],
+                              [-py, ay0], [py, this.height - 1 - ay0]]) {
+            if (p === 0) {
+                if (q < 0) return null;          // parallel to this edge and outside it
+                continue;
+            }
+            const r = q / p;
+            if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+            else       { if (r < t0) return null; if (r < t1) t1 = r; }
+        }
+        // Undo the aspect correction on the way out: set() applies it again.
+        const inv = this.aspect === 1 ? 1 : 1 / this.aspect;
+        return [Math.round(ax0 + t0 * px), Math.round((ay0 + t0 * py) * inv),
+                Math.round(ax0 + t1 * px), Math.round((ay0 + t1 * py) * inv)];
+    }
+
     /** Bresenham, at dot coordinates. */
     line(x0, y0, x1, y1, rgb = -1, weight = 0) {
         // Reject non-finite endpoints before anything else. There IS a loop guard below, but it
@@ -144,25 +193,10 @@ export class Canvas {
         // stops before it arrives and the line silently disappears. Clipping the SEGMENT keeps
         // both properties — bounded work, and every visible dot still drawn.
         //
-        // Liang-Barsky against the dot grid, in the aspect-corrected space set() works in.
-        const ax0 = x0, ay0 = this.aspect === 1 ? y0 : y0 * this.aspect;
-        const ax1 = x1, ay1 = this.aspect === 1 ? y1 : y1 * this.aspect;
-        let px = ax1 - ax0, py = ay1 - ay0;
-        let t0 = 0, t1 = 1;
-        for (const [p, q] of [[-px, ax0], [px, this.width - 1 - ax0],
-                              [-py, ay0], [py, this.height - 1 - ay0]]) {
-            if (p === 0) {
-                if (q < 0) return;               // parallel to this edge and outside it
-                continue;
-            }
-            const r = q / p;
-            if (p < 0) { if (r > t1) return; if (r > t0) t0 = r; }
-            else       { if (r < t0) return; if (r < t1) t1 = r; }
-        }
-        // Undo the aspect correction on the way out: set() applies it again.
-        const inv = this.aspect === 1 ? 1 : 1 / this.aspect;
-        let x = Math.round(ax0 + t0 * px), y = Math.round((ay0 + t0 * py) * inv);
-        const xe = Math.round(ax0 + t1 * px), ye = Math.round((ay0 + t1 * py) * inv);
+        const seg = this._clipSegment(x0, y0, x1, y1);
+        if (seg === null) return;
+        let [x, y] = seg;
+        const [, , xe, ye] = seg;
         const dx = Math.abs(xe - x), sx = x < xe ? 1 : -1;
         const dy = -Math.abs(ye - y), sy = y < ye ? 1 : -1;
         let err = dx + dy;
@@ -192,8 +226,10 @@ export class Canvas {
      * guide lines.
      */
     dottedLine(x0, y0, x1, y1, rgb = -1, weight = 0, step = 2) {
-        let x = Math.round(x0), y = Math.round(y0);
-        const xe = Math.round(x1), ye = Math.round(y1);
+        const seg = this._clipSegment(x0, y0, x1, y1);
+        if (seg === null) return;
+        let [x, y] = seg;
+        const [, , xe, ye] = seg;
         const dx = Math.abs(xe - x), sx = x < xe ? 1 : -1;
         const dy = -Math.abs(ye - y), sy = y < ye ? 1 : -1;
         let err = dx + dy, n = 0;

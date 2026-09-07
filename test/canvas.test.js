@@ -412,3 +412,68 @@ test('clipping does not disturb ordinary lines', () => {
     const diag = new Canvas(20, 10); diag.line(0, 0, 39, 39, 0xffffff, 1);
     assert.ok(dots(diag) >= 20, 'a diagonal');
 });
+
+test('dottedLine is clipped and guarded exactly like line', () => {
+    // The sibling-path bug. line() got the non-finite guard and the Liang-Barsky clip; dottedLine()
+    // sits directly beneath it, runs the same Bresenham walk over the same unvalidated inputs, and
+    // got neither. Measured before the fix, on a 100x30 canvas:
+    //     line(0,0,1e9,1e9)        0 ms   (clipped)
+    //     dottedLine(0,0,1e8,1e8)  629 ms (rasterised step by step, and linear in the coordinate —
+    //                                      1e9 is ~6 s, 1e10 a minute, with no bound)
+    // Same class of pathological input, same file, one path fixed. [external review, 2026-09-06]
+    const dots = c => [...c.toString()].filter(ch => ch > '\u2800' && ch <= '\u28FF').length;
+
+    const far = new Canvas(20, 10);
+    const t0 = Date.now();
+    far.dottedLine(10, 10, 1e9, 3, 0xffffff, 1);
+    assert.ok(Date.now() - t0 < 500, 'a huge finite endpoint must not be rasterised step by step');
+    assert.ok(dots(far) > 0, 'and it must still draw the part that is on the canvas');
+
+    const incoming = new Canvas(20, 10);
+    incoming.dottedLine(-1000, -1000, 10, 10, 0xffffff, 1);
+    assert.ok(dots(incoming) > 0, 'a dotted line arriving from off-canvas must still be drawn');
+
+    const outside = new Canvas(20, 10);
+    outside.dottedLine(-50, -50, -40, -40, 0xffffff, 1);
+    assert.strictEqual(dots(outside), 0, 'a dotted line entirely outside must draw nothing');
+
+    // Non-finite input: line() refuses it, so dottedLine() must too — silently, not by throwing.
+    for (const [x0, y0, x1, y1] of [[NaN, 0, 5, 5], [0, 0, Infinity, 5], [0, -Infinity, 5, 5]]) {
+        const c = new Canvas(20, 10);
+        assert.doesNotThrow(() => c.dottedLine(x0, y0, x1, y1, 0xffffff, 1));
+        assert.strictEqual(dots(c), 0, `non-finite (${x0},${y0},${x1},${y1}) must draw nothing`);
+    }
+});
+
+test('clipping preserves the dotted spacing', () => {
+    // The clip must not silently turn a dotted line into a solid one.
+    //
+    // Counting CHARACTER CELLS is the wrong instrument here and my first version of this test used
+    // it: a cell is 2x4 dots, so on a horizontal line at step 2 every cell still holds one lit dot
+    // and dotted scores identical to solid (30 vs 30) while rendering visibly differently
+    // (U+2809 vs U+2801). Count lit DOTS via the braille bit pattern instead.
+    const litDots = c => [...c.toString({colour: false})]
+        .filter(ch => ch >= '\u2800' && ch <= '\u28FF')
+        .reduce((n, ch) => n + ((ch.codePointAt(0) - 0x2800).toString(2).match(/1/g) || []).length, 0);
+
+    const solid = new Canvas(30, 8);
+    solid.line(0, 4, 59, 4, 0xffffff, 1);
+    const dotted = new Canvas(30, 8);
+    dotted.dottedLine(0, 4, 59, 4, 0xffffff, 1, 2);
+    assert.ok(litDots(dotted) < litDots(solid),
+              `dotted must light fewer dots than solid (${litDots(dotted)} vs ${litDots(solid)})`);
+    assert.ok(litDots(dotted) > 0, 'but it must still draw something');
+
+    // And a bigger step must be sparser still — proves `step` survives the clip rather than
+    // being quietly ignored.
+    const sparse = new Canvas(30, 8);
+    sparse.dottedLine(0, 4, 59, 4, 0xffffff, 1, 5);
+    assert.ok(litDots(sparse) < litDots(dotted),
+              `step 5 must be sparser than step 2 (${litDots(sparse)} vs ${litDots(dotted)})`);
+
+    // A CLIPPED dotted line must be dotted too — the property the clip could plausibly break.
+    const clipped = new Canvas(30, 8);
+    clipped.dottedLine(-200, 4, 59, 4, 0xffffff, 1, 5);
+    assert.ok(litDots(clipped) > 0 && litDots(clipped) < litDots(solid),
+              `a clipped dotted line stays dotted (${litDots(clipped)} vs solid ${litDots(solid)})`);
+});
