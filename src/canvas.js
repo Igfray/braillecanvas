@@ -256,6 +256,116 @@ export class Canvas {
      * `col`/`row` is the anchor the label belongs to; it goes to the right if there is room and
      * flips to the left if there is not, so nothing is ever clipped by the edge.
      */
+    /** A run of connected segments — the shape a plotted series actually is.
+     *
+     * Every caller was writing this loop by hand, which is how the clipping and non-finite
+     * handling in line() get quietly reimplemented, slightly wrong, at each call site. Points may
+     * be [x, y] pairs or {x, y} objects, because a caller with data from elsewhere should not have
+     * to reshape it first.
+     *
+     * A non-finite point is SKIPPED, not fatal: NaN is what a projection returns for a sample
+     * behind the viewer, and one bad reading in a thousand must not blank the whole series. The
+     * segments either side of it still draw — the gap is the honest rendering of a missing value.
+     */
+    polyline(points, rgb = -1, weight = 0) {
+        if (!points || points.length < 2) return;
+        const px = p => (Array.isArray(p) ? p[0] : p && p.x);
+        const py = p => (Array.isArray(p) ? p[1] : p && p.y);
+        for (let i = 1; i < points.length; i++) {
+            const x0 = px(points[i - 1]), y0 = py(points[i - 1]);
+            const x1 = px(points[i]), y1 = py(points[i]);
+            // line() rejects non-finite endpoints itself; the explicit skip is here so a bad
+            // sample costs one comparison rather than a call, on a path that runs per point.
+            if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+                !Number.isFinite(x1) || !Number.isFinite(y1)) continue;
+            this.line(x0, y0, x1, y1, rgb, weight);
+        }
+    }
+
+    /** The outline of a rectangle. Corners may be given in any order. */
+    rect(x0, y0, x1, y1, rgb = -1, weight = 0) {
+        if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+            !Number.isFinite(x1) || !Number.isFinite(y1)) return;
+        const ax = Math.min(x0, x1), bx = Math.max(x0, x1);
+        const ay = Math.min(y0, y1), by = Math.max(y0, y1);
+        this.line(ax, ay, bx, ay, rgb, weight);
+        this.line(bx, ay, bx, by, rgb, weight);
+        this.line(bx, by, ax, by, rgb, weight);
+        this.line(ax, by, ax, ay, rgb, weight);
+    }
+
+    /** A solid rectangle.
+     *
+     * Clamped to the canvas BEFORE the loops rather than relying on set() to reject each dot:
+     * fillRect(-1e7, -1e7, 1e7, 1e7) is finite and would otherwise cost 1e14 set() calls that all
+     * decline. Same reasoning as the segment clip in line() — bound the work, not the damage.
+     */
+    fillRect(x0, y0, x1, y1, rgb = -1, weight = 0) {
+        if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+            !Number.isFinite(x1) || !Number.isFinite(y1)) return;
+        const ax = Math.max(0, Math.floor(Math.min(x0, x1)));
+        const bx = Math.min(this.width - 1, Math.floor(Math.max(x0, x1)));
+        const ay = Math.max(0, Math.floor(Math.min(y0, y1)));
+        const by = Math.min(this.height - 1, Math.floor(Math.max(y0, y1)));
+        for (let y = ay; y <= by; y++)
+            for (let x = ax; x <= bx; x++)
+                this.set(x, y, rgb, weight);
+    }
+
+    /** A circle outline.
+     *
+     * Drawn by ROWS, not by walking the circumference. The midpoint algorithm costs O(r) steps,
+     * so a large radius is slow even when almost none of it is visible — and the obvious guard,
+     * refusing r beyond the canvas size, is WRONG for the same reason clamping a line's iteration
+     * count was wrong: a circle centred off-screen with a huge radius has an arc that genuinely
+     * crosses the canvas, and rejecting it makes that arc silently disappear. Measured before
+     * fixing: circle(40, 500, r=480) on an 80x32 canvas drew nothing while its arc passed right
+     * through the middle.
+     *
+     * Iterating the visible rows instead bounds the work by the canvas (at most `height` rows,
+     * whatever r is) and keeps every visible dot. For each row the circle spans, x = sqrt(r^2 -
+     * dy^2) gives the two crossings; the vertical extremes are filled from the x side so the
+     * left and right edges do not thin out to single dots.
+     */
+    circle(cx, cy, r, rgb = -1, weight = 0) {
+        if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(r) || r <= 0) return;
+        const y0 = Math.max(0, Math.ceil(cy - r)), y1 = Math.min(this.height - 1, Math.floor(cy + r));
+        for (let y = y0; y <= y1; y++) {
+            const d = r * r - (y - cy) * (y - cy);
+            if (d < 0) continue;
+            const half = Math.sqrt(d);
+            this.set(Math.round(cx - half), y, rgb, weight);
+            this.set(Math.round(cx + half), y, rgb, weight);
+        }
+        // The same pass by columns, so the flat top and bottom of the ring are continuous rather
+        // than a row of isolated dots where dy/dx is near zero.
+        const x0 = Math.max(0, Math.ceil(cx - r)), x1 = Math.min(this.width - 1, Math.floor(cx + r));
+        for (let x = x0; x <= x1; x++) {
+            const d = r * r - (x - cx) * (x - cx);
+            if (d < 0) continue;
+            const half = Math.sqrt(d);
+            this.set(x, Math.round(cy - half), rgb, weight);
+            this.set(x, Math.round(cy + half), rgb, weight);
+        }
+    }
+
+    /** A filled disc — horizontal spans, so each row is one clamped run rather than a hit test.
+     *
+     * No radius rejection here either: the row range is already clamped to the canvas, so a huge
+     * radius costs at most `height` iterations and still fills whatever part is visible. */
+    fillCircle(cx, cy, r, rgb = -1, weight = 0) {
+        if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(r) || r <= 0) return;
+        const y0 = Math.max(0, Math.ceil(cy - r)), y1 = Math.min(this.height - 1, Math.floor(cy + r));
+        for (let y = y0; y <= y1; y++) {
+            const d = r * r - (y - cy) * (y - cy);
+            if (d < 0) continue;
+            const half = Math.sqrt(d);
+            const xa = Math.max(0, Math.ceil(cx - half));
+            const xb = Math.min(this.width - 1, Math.floor(cx + half));
+            for (let x = xa; x <= xb; x++) this.set(x, y, rgb, weight);
+        }
+    }
+
     tryText(col, row, str, rgb = -1, {pad = 1} = {}) {
         // Snap first, for the same reason text() does — and measure in CHARACTERS, since
         // str.length counts UTF-16 code units and would reserve one cell too many per

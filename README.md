@@ -36,6 +36,19 @@ c.tryText(2, 0, 'sin', 0x3987e5);          // cell coordinates
 console.log(c.toString());
 ```
 
+A series is one call, and a frame around it is another:
+
+```js
+const c = new Canvas(60, 8);
+const pts = Array.from({length: 120}, (_, i) => [i, 16 + Math.round(13 * Math.sin(i / 9))]);
+c.rect(0, 0, 119, 31);                     // plot frame
+c.polyline(pts, 0x3987e5);                 // the series
+```
+
+`polyline` **skips** a non-finite point rather than throwing or truncating: `NaN` is what a
+projection returns for a sample behind the viewer, and one bad reading in a thousand should leave
+a gap, not delete the rest of the series.
+
 ## Example: an image, dithered
 
 `examples/image.js` renders a picture as braille. A 110×65 terminal is a **220×260 bitmap** —
@@ -132,6 +145,11 @@ anchor at the frame edge, so you never get `Saturn` rendered as `Sat`.
 | `setCellBackground(col, row, rgb)` | paint a cell's background (cell coords) |
 | `line(x0, y0, x1, y1, rgb?, weight?)` | Bresenham |
 | `dottedLine(..., step = 2)` | every `step`-th dot |
+| `polyline(points, rgb?, weight?)` | connected run; `[x,y]` pairs or `{x,y}` objects |
+| `rect(x0, y0, x1, y1, rgb?, weight?)` | outline; corners in any order |
+| `fillRect(x0, y0, x1, y1, rgb?, weight?)` | solid |
+| `circle(cx, cy, r, rgb?, weight?)` | ring |
+| `fillCircle(cx, cy, r, rgb?, weight?)` | disc |
 | `text(col, row, str, rgb?)` | unconditional, cell coords |
 | `tryText(col, row, str, rgb?, {pad})` | places only if free; returns `boolean` |
 | `clear()` | dots, colours and labels |
@@ -165,6 +183,15 @@ to about 1.1:1, which finally puts more ink into the subject than the guides.
 
 Extracted from those, so the awkward parts — colour arbitration, label collision, NaN
 coordinates from a projection — are ones it has already hit.
+
+## Changelog
+
+- **0.4.0** — shape primitives: `polyline`, `rect`, `fillRect`, `circle`, `fillCircle`. Every one
+  clips to the canvas rather than bounding its iteration count, so a shape far larger than the
+  view still draws the part you can see — `circle(40, 500, r=480)` on an 80×32 canvas has an arc
+  straight through the middle, and an earlier draft of `circle` refused it outright.
+- **0.3.3** — `dottedLine` shares `line`'s Liang–Barsky clip; a 1e8-length dotted line went from
+  629 ms to 0.2 ms.
 
 ## Licence
 

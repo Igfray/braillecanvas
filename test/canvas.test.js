@@ -477,3 +477,153 @@ test('clipping preserves the dotted spacing', () => {
     assert.ok(litDots(clipped) > 0 && litDots(clipped) < litDots(solid),
               `a clipped dotted line stays dotted (${litDots(clipped)} vs solid ${litDots(solid)})`);
 });
+
+// ── shape primitives ──────────────────────────────────────────────────────────────────────────
+// Found by USING the library rather than reading it: plotting a series — the thing this canvas
+// exists for — needed a hand-written loop over line() at every call site, and a plot frame, an
+// axis, a marker and a bar each needed nested loops in user code. Every one of those is a place
+// for a caller to reinvent the clipping and bounds handling that already live here, slightly
+// wrong. Written against the documented contract, not the implementation.
+
+test('polyline draws the same pixels as the equivalent line() calls', () => {
+    const pts = [[0, 0], [20, 10], [40, 4], [60, 30]];
+    const a = new Canvas(40, 10);
+    for (let i = 1; i < pts.length; i++)
+        a.line(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+    const b = new Canvas(40, 10);
+    b.polyline(pts);
+    assert.equal(plain(b), plain(a));
+});
+
+test('polyline is a no-op for fewer than two points', () => {
+    // Contract test, not a guard test: mutation shows the explicit `length < 2` check is
+    // REDUNDANT — the loop starts at i=1 and cannot execute for 0 or 1 points, so removing it
+    // changes nothing. Kept because the behaviour is part of the API, and documented as
+    // structurally guaranteed rather than defended, so nobody mistakes this for coverage of the
+    // guard line above it. Also covers null/undefined, which the loop would throw on.
+    const c = new Canvas(10, 4);
+    const blank = plain(c);
+    c.polyline([]);
+    c.polyline([[1, 1]]);
+    c.polyline(null);
+    c.polyline(undefined);
+    assert.equal(plain(c), blank);
+});
+
+test('polyline skips a non-finite point without losing the rest of the run', () => {
+    // A projection returns NaN for a point behind the viewer. One bad sample must not swallow the
+    // series that follows it — the run resumes on the far side of the gap.
+    //
+    // The first version of this test asserted only that SOMETHING drew, which passed while every
+    // segment after the bad point was silently dropped: the left half of the canvas alone
+    // satisfied it. Assert both sides of the gap explicitly.
+    const c = new Canvas(40, 10);
+    c.polyline([[0, 0], [10, 10], [NaN, 5], [60, 10], [79, 0]]);
+    const rows = plain(c).split('\n');
+    const left = rows.map(r => r.slice(0, 20)).join('').trim();
+    const right = rows.map(r => r.slice(20)).join('').trim();
+    assert.ok(left.length > 0, 'the segments before the bad point were lost');
+    assert.ok(right.length > 0, 'the segments AFTER the bad point were lost — one NaN truncated the series');
+});
+
+test('polyline clips an off-screen run in bounded time', () => {
+    const c = new Canvas(40, 10);
+    const t0 = performance.now();
+    c.polyline([[-1e8, -1e8], [1e8, 1e8], [-1e8, 1e8]]);
+    assert.ok(performance.now() - t0 < 100, 'polyline did not clip — it walked the whole span');
+});
+
+test('polyline accepts {x, y} objects as well as [x, y] pairs', () => {
+    const a = new Canvas(20, 6); a.polyline([[0, 0], [10, 10]]);
+    const b = new Canvas(20, 6); b.polyline([{x: 0, y: 0}, {x: 10, y: 10}]);
+    assert.equal(plain(b), plain(a));
+});
+
+test('rect draws four sides and leaves the interior empty', () => {
+    const hollow = new Canvas(20, 6); hollow.rect(2, 2, 20, 12);
+    const solid = new Canvas(20, 6); solid.fillRect(2, 2, 20, 12);
+    assert.ok(plain(hollow).trim().length > 0, 'rect drew nothing');
+    assert.notEqual(plain(hollow), plain(solid), 'rect filled its interior');
+});
+
+test('fillRect treats inverted corners the same as ordered ones', () => {
+    const a = new Canvas(20, 6); a.fillRect(2, 2, 20, 12);
+    const b = new Canvas(20, 6); b.fillRect(20, 12, 2, 2);
+    assert.equal(plain(b), plain(a));
+});
+
+test('fillRect clips a rectangle larger than the canvas instead of walking it', () => {
+    const c = new Canvas(20, 6);
+    const t0 = performance.now();
+    c.fillRect(-1e7, -1e7, 1e7, 1e7);
+    assert.ok(performance.now() - t0 < 100, 'fillRect did not clip to the canvas');
+});
+
+test('rect and fillRect refuse a non-finite rectangle', () => {
+    const c = new Canvas(20, 6);
+    const blank = plain(c);
+    c.rect(NaN, 0, 10, 10);
+    c.fillRect(0, 0, Infinity, 10);
+    assert.equal(plain(c), blank);
+});
+
+test('circle draws a ring and fillCircle draws a disc', () => {
+    const ring = new Canvas(30, 10); ring.circle(30, 20, 12);
+    const disc = new Canvas(30, 10); disc.fillCircle(30, 20, 12);
+    assert.ok(plain(ring).trim().length > 0, 'circle drew nothing');
+    assert.notEqual(plain(ring), plain(disc), 'circle filled its interior');
+});
+
+test('circle spans more than one row', () => {
+    const c = new Canvas(30, 10);
+    c.circle(30, 20, 10);
+    const rows = plain(c).split('\n').filter(r => r.trim());
+    assert.ok(rows.length > 1, 'circle collapsed to a single row');
+});
+
+test('a zero or negative radius draws nothing', () => {
+    const c = new Canvas(20, 6);
+    const blank = plain(c);
+    c.circle(10, 10, 0);
+    c.circle(10, 10, -5);
+    assert.equal(plain(c), blank);
+});
+
+test('circle clips a radius far larger than the canvas in bounded time', () => {
+    const c = new Canvas(20, 6);
+    const t0 = performance.now();
+    c.circle(10, 10, 1e7);
+    assert.ok(performance.now() - t0 < 100, 'circle walked its whole circumference');
+});
+
+test('circle refuses non-finite input', () => {
+    const c = new Canvas(20, 6);
+    const blank = plain(c);
+    c.circle(NaN, 10, 5);
+    c.circle(10, 10, Infinity);
+    assert.equal(plain(c), blank);
+});
+
+test('a huge circle centred off-canvas still draws its visible arc', () => {
+    // The first implementation rejected any radius beyond the canvas size. That bounded the work
+    // and silently deleted the shape: circle(40, 500, r=480) on an 80x32 canvas has an arc
+    // passing straight through the middle, and drew nothing. It is the same mistake the segment
+    // clip in line() exists to avoid — bound the WORK, never the geometry.
+    const c = new Canvas(40, 8);
+    c.circle(40, 500, 480);
+    assert.ok(plain(c).trim().length > 0,
+        'a circle whose arc crosses the canvas drew nothing — the radius guard is rejecting geometry');
+});
+
+test('the visible arc of an off-canvas circle is bounded work', () => {
+    const c = new Canvas(40, 8);
+    const t0 = performance.now();
+    c.circle(40, 1e6, 1e6);          // arc grazes the canvas; radius is enormous
+    assert.ok(performance.now() - t0 < 100, 'circle cost scaled with the radius, not the canvas');
+});
+
+test('fillCircle centred off-canvas fills the visible part', () => {
+    const c = new Canvas(40, 8);
+    c.fillCircle(40, 60, 48);
+    assert.ok(plain(c).trim().length > 0, 'the visible cap of a large disc was discarded');
+});
